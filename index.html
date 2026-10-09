@@ -27,6 +27,14 @@
   textarea { resize: vertical; min-height: 70px; }
   .btn { background: #1877f2; color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-weight: 600; font-size: 15px; cursor: pointer; margin-top: 8px; }
   .btn:disabled { opacity: .5; cursor: default; }
+  [hidden] { display: none !important; }
+  .composer-row { display: flex; gap: 8px; margin-top: 8px; }
+  .composer-row .btn { margin-top: 0; }
+  label.btn { cursor: pointer; }
+  #photoPreview { position: relative; margin-top: 8px; display: inline-block; max-width: 100%; }
+  #photoPreview img { max-width: 100%; max-height: 240px; border-radius: 8px; display: block; }
+  #photoRemove { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; border: none; background: rgba(0,0,0,.65); color: #fff; font-size: 14px; cursor: pointer; }
+  .post-media { display: block; width: 100%; border-radius: 8px; margin-bottom: 10px; }
   .post-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .avatar { width: 42px; height: 42px; border-radius: 50%; background: #e4e6eb; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
   .post-head .name { font-weight: 600; }
@@ -101,7 +109,16 @@
     </div>
     <div id="composer" class="card" hidden>
       <textarea id="postBody" placeholder="What's on your mind?"></textarea>
-      <button class="btn" id="postBtn">Post</button>
+      <div id="photoPreview" hidden>
+        <img id="photoImg" alt="Photo preview">
+        <button id="photoRemove" title="Remove photo">✕</button>
+      </div>
+      <div class="composer-row">
+        <button class="btn" id="postBtn">Post</button>
+        <label class="btn ghost" for="photoInput">📷 Photo</label>
+        <input type="file" id="photoInput" accept="image/*" hidden>
+      </div>
+      <div class="muted" id="uploadStatus" hidden style="margin-top:6px"></div>
     </div>
     <div class="refresh"><button id="refreshBtn">↻ Refresh feed</button></div>
     <div id="feed"></div>
@@ -222,7 +239,7 @@ async function loadFeed() {
   const y = window.scrollY; // remember screen position so reloads don't jump
   try {
     const { data: posts, error } = await sb.from('posts')
-      .select('id, body, profile_id, created_at')
+      .select('id, body, profile_id, created_at, media_url, media_type')
       .order('created_at', { ascending: false }).limit(50);
     if (error) throw error;
     const ids = posts.map(p => p.id);
@@ -260,6 +277,7 @@ function renderPost(p, author, nLikes, liked, nComments) {
     '<div class="post-head"><div class="avatar">' + esc(a.avatar_emoji) + '</div>' +
     '<div><div class="name">' + esc(a.display_name) + '</div><div class="time">' + timeAgo(p.created_at) + '</div></div></div>' +
     '<div class="post-body">' + esc(p.body) + '</div>' +
+    (p.media_url && p.media_type === 'photo' ? '<img class="post-media" src="' + esc(p.media_url) + '" alt="Photo" loading="lazy">' : '') +
     '<div class="post-actions">' +
       '<button data-like class="' + (liked ? 'liked' : '') + '"' + (myProfile ? '' : ' disabled') + '>👍 Like' + (nLikes ? ' (' + nLikes + ')' : '') + '</button>' +
       '<button data-comments>💬 Comments' + (nComments ? ' (' + nComments + ')' : '') + '</button>' +
@@ -269,7 +287,7 @@ function renderPost(p, author, nLikes, liked, nComments) {
   d.querySelector('[data-comments]').onclick = () => toggleComments(p.id);
   if (mine) {
     d.querySelector('[data-edit]').onclick = () => startPostEdit(p, d.querySelector('.post-body'));
-    d.querySelector('[data-del]').onclick = () => deletePost(p.id);
+    d.querySelector('[data-del]').onclick = () => deletePost(p);
   }
   return d;
 }
@@ -295,12 +313,59 @@ function startPostEdit(p, bodyEl) {
   ta.focus();
 }
 
-async function deletePost(postId) {
+async function deletePost(p) {
   if (!confirm('Delete this post? Its comments and likes will be removed too.')) return;
-  const { error } = await sb.from('posts').delete().eq('id', postId);
+  if (p.media_url) {
+    const parts = String(p.media_url).split('/storage/v1/object/public/media/');
+    if (parts[1]) await sb.storage.from('media').remove([parts[1]]);
+  }
+  const { error } = await sb.from('posts').delete().eq('id', p.id);
   if (error) { alert('Could not delete: ' + error.message); return; }
   loadFeed();
 }
+
+// ---------- photo picker + upload ----------
+let pickedPhoto = null;
+
+function compressImage(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      const s = Math.min(1, maxDim / Math.max(w, h));
+      w = Math.round(w * s); h = Math.round(h * s);
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      cv.toBlob(b => b ? resolve(b) : reject(new Error('Could not compress photo')), 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that photo')); };
+    img.src = url;
+  });
+}
+
+$('photoInput').onchange = async () => {
+  const f = $('photoInput').files[0];
+  if (!f) return;
+  if (!f.type.startsWith('image/')) { alert('Please pick a photo file.'); $('photoInput').value = ''; return; }
+  if (f.size > 15 * 1024 * 1024) { alert('That photo is too large (max 15MB).'); $('photoInput').value = ''; return; }
+  try {
+    pickedPhoto = await compressImage(f, 1600, 0.82);
+    $('photoImg').src = URL.createObjectURL(pickedPhoto);
+    $('photoPreview').hidden = false;
+  } catch (e) {
+    alert(e.message || 'Could not read that photo.');
+    $('photoInput').value = '';
+  }
+};
+
+$('photoRemove').onclick = () => {
+  pickedPhoto = null;
+  $('photoInput').value = '';
+  $('photoPreview').hidden = true;
+};
 
 async function toggleLike(postId, wasLiked) {
   if (!myProfile) return;
@@ -387,11 +452,31 @@ function toggleComments(postId) {
 
 $('postBtn').onclick = async () => {
   const body = $('postBody').value.trim();
-  if (!body || !myProfile) return;
+  if ((!body && !pickedPhoto) || !myProfile) return;
   $('postBtn').disabled = true;
-  await sb.from('posts').insert({ profile_id: myProfile.id, body });
-  $('postBody').value = ''; $('postBtn').disabled = false;
-  loadFeed();
+  try {
+    let media_url = null, media_type = null;
+    if (pickedPhoto) {
+      $('uploadStatus').hidden = false;
+      $('uploadStatus').textContent = 'Uploading photo…';
+      const path = myProfile.id + '/' + crypto.randomUUID() + '.jpg';
+      const { error: upErr } = await sb.storage.from('media').upload(path, pickedPhoto, { contentType: 'image/jpeg' });
+      if (upErr) throw upErr;
+      media_url = sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+      media_type = 'photo';
+    }
+    const { error } = await sb.from('posts').insert({ profile_id: myProfile.id, body: body, media_url, media_type });
+    if (error) throw error;
+    $('postBody').value = '';
+    pickedPhoto = null; $('photoInput').value = ''; $('photoPreview').hidden = true;
+    $('uploadStatus').hidden = true;
+    loadFeed();
+  } catch (e) {
+    $('uploadStatus').hidden = true;
+    alert('Could not post: ' + e.message);
+  } finally {
+    $('postBtn').disabled = false;
+  }
 };
 
 async function loadPeople() {
