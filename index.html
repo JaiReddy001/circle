@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Facebook Clone">
+<meta name="theme-color" content="#1877f2">
+<title>Facebook Clone</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f0f2f5; color: #1c1e21; }
+  header { background: #1877f2; color: #fff; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 20px; }
+  header .user { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  header button { background: #fff; color: #1877f2; border: none; border-radius: 6px; padding: 7px 14px; font-weight: 600; cursor: pointer; }
+  .wrap { max-width: 620px; margin: 0 auto; padding: 12px; }
+  .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.12); padding: 14px; margin-bottom: 12px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tabs button { flex: 1; padding: 10px; border: none; border-radius: 8px; background: #e4e6eb; font-weight: 600; cursor: pointer; font-size: 15px; }
+  .tabs button.active { background: #1877f2; color: #fff; }
+  textarea, input[type=email], input[type=password], input[type=text] { width: 100%; border: 1px solid #ccd0d5; border-radius: 8px; padding: 10px; font-size: 15px; font-family: inherit; }
+  textarea { resize: vertical; min-height: 70px; }
+  .btn { background: #1877f2; color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-weight: 600; font-size: 15px; cursor: pointer; margin-top: 8px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .post-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .avatar { width: 42px; height: 42px; border-radius: 50%; background: #e4e6eb; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+  .post-head .name { font-weight: 600; }
+  .post-head .time { font-size: 12px; color: #65676b; }
+  .post-body { font-size: 15px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; margin-bottom: 10px; }
+  .post-actions { display: flex; gap: 6px; border-top: 1px solid #e4e6eb; padding-top: 8px; }
+  .post-actions button { flex: 1; background: none; border: none; padding: 8px; border-radius: 6px; font-size: 14px; font-weight: 600; color: #65676b; cursor: pointer; }
+  .post-actions button:hover { background: #f0f2f5; }
+  .post-actions button.liked { color: #1877f2; }
+  .comments { margin-top: 8px; border-top: 1px solid #e4e6eb; padding-top: 8px; }
+  .comment { display: flex; gap: 8px; margin-bottom: 8px; }
+  .comment .avatar { width: 32px; height: 32px; font-size: 18px; }
+  .comment .bubble { background: #f0f2f5; border-radius: 12px; padding: 8px 12px; font-size: 14px; }
+  .comment .bubble .name { font-weight: 600; font-size: 13px; }
+  .comment-row { display: flex; gap: 8px; margin-top: 8px; }
+  .comment-row input { flex: 1; border-radius: 20px; }
+  .comment-row button { margin-top: 0; border-radius: 20px; padding: 8px 14px; }
+  .person { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f2f5; }
+  .person:last-child { border-bottom: none; }
+  .muted { color: #65676b; font-size: 14px; }
+  .notice { background: #fff8e1; border: 1px solid #ffe082; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
+  .emoji-pick { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .emoji-pick span { font-size: 28px; cursor: pointer; padding: 4px; border-radius: 8px; }
+  .emoji-pick span.sel { background: #e7f3ff; outline: 2px solid #1877f2; }
+  .auth-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  .auth-tabs button { flex: 1; padding: 8px; border: none; border-radius: 6px; background: #e4e6eb; font-weight: 600; cursor: pointer; }
+  .auth-tabs button.active { background: #1877f2; color: #fff; }
+  .err { color: #d32f2f; font-size: 14px; margin-top: 8px; }
+  .refresh { text-align: center; margin-bottom: 12px; }
+  .refresh button { background: #fff; border: 1px solid #ccd0d5; border-radius: 20px; padding: 7px 18px; font-weight: 600; cursor: pointer; color: #65676b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Facebook Clone</h1>
+  <div class="user"><span id="userLabel"></span><button id="authBtn" hidden></button></div>
+</header>
+<div class="wrap">
+
+  <div id="authBox" class="card" hidden>
+    <div class="auth-tabs">
+      <button id="tabIn" class="active">Sign in</button>
+      <button id="tabUp">Sign up</button>
+    </div>
+    <input type="email" id="email" placeholder="Email" autocomplete="email"><br><br>
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password">
+    <button class="btn" id="authGo">Sign in</button>
+    <div class="err" id="authErr"></div>
+  </div>
+
+  <div id="profileBox" class="card" hidden>
+    <h3>Create your profile</h3>
+    <p class="muted">Pick how you'll appear to friends &amp; family.</p><br>
+    <input type="text" id="displayName" placeholder="Your name" maxlength="40"><br>
+    <div class="emoji-pick" id="emojiPick"></div>
+    <input type="text" id="bio" placeholder="Bio (optional)" maxlength="120">
+    <button class="btn" id="saveProfile">Save profile</button>
+    <div class="err" id="profileErr"></div>
+  </div>
+
+  <div id="appBox" hidden>
+    <div class="notice" id="signedOutNotice" hidden>You're browsing as a guest. <b>Sign in</b> to post, like and comment.</div>
+    <div class="tabs">
+      <button id="tabFeed" class="active">Feed</button>
+      <button id="tabPeople">People</button>
+    </div>
+    <div id="composer" class="card" hidden>
+      <textarea id="postBody" placeholder="What's on your mind?"></textarea>
+      <button class="btn" id="postBtn">Post</button>
+    </div>
+    <div class="refresh"><button id="refreshBtn">↻ Refresh feed</button></div>
+    <div id="feed"></div>
+    <div id="people" class="card" hidden></div>
+  </div>
+
+</div>
+
+<script>
+const SUPABASE_URL = 'https://tpswnwmqzsxlbqzwklxa.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwc3dud21xenN4bGJxendrbHhhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NjY3MzcsImV4cCI6MjEwNzE0MjczN30.t4AiYY59ynyY0lcCCdg_I27V4FIpCYxUmvUzWWmKi_I';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const EMOJIS = ['🙂','😎','🤩','😇','🥳','🤠','👩','👨','👧','👦','👵','👴','🐶','🐱','🦊','🐼','🦁','🐸'];
+let session = null, myProfile = null, mode = 'in', pickedEmoji = EMOJIS[0], openComments = new Set();
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const timeAgo = iso => {
+  const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h';
+  return Math.floor(s/86400) + 'd';
+};
+
+// ---------- auth ----------
+async function init() {
+  const { data } = await sb.auth.getSession();
+  session = data.session;
+  sb.auth.onAuthStateChange((_e, s) => { session = s; render(); });
+  render();
+}
+
+async function render() {
+  const signedIn = !!session;
+  $('authBox').hidden = signedIn;
+  $('authBtn').hidden = false;
+  $('authBtn').textContent = signedIn ? 'Sign out' : 'Sign in';
+  $('userLabel').textContent = '';
+  if (!signedIn) {
+    $('profileBox').hidden = true; $('appBox').hidden = false;
+    $('composer').hidden = true; $('signedOutNotice').hidden = false;
+    myProfile = null; loadFeed(); return;
+  }
+  const { data } = await sb.from('profiles').select('*').eq('user_id', session.user.id).maybeSingle();
+  myProfile = data || null;
+  $('profileBox').hidden = !!myProfile;
+  $('appBox').hidden = !myProfile;
+  $('composer').hidden = !myProfile;
+  $('signedOutNotice').hidden = true;
+  if (myProfile) { $('userLabel').textContent = myProfile.avatar_emoji + ' ' + myProfile.display_name; loadFeed(); }
+}
+
+$('authBtn').onclick = async () => {
+  if (session) { await sb.auth.signOut(); }
+  else { $('authBox').hidden = false; $('authBox').scrollIntoView(); }
+};
+$('tabIn').onclick = () => setMode('in');
+$('tabUp').onclick = () => setMode('up');
+function setMode(m) {
+  mode = m;
+  $('tabIn').classList.toggle('active', m === 'in');
+  $('tabUp').classList.toggle('active', m === 'up');
+  $('authGo').textContent = m === 'in' ? 'Sign in' : 'Sign up';
+  $('authErr').textContent = '';
+}
+$('authGo').onclick = async () => {
+  $('authErr').textContent = '';
+  const email = $('email').value.trim(), password = $('password').value;
+  if (!email || !password) { $('authErr').textContent = 'Enter email and password.'; return; }
+  $('authGo').disabled = true;
+  try {
+    if (mode === 'in') {
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    } else {
+      const { data, error } = await sb.auth.signUp({ email, password });
+      if (error) throw error;
+      if (!data.session) { $('authErr').textContent = 'Account created! Now sign in with the "Sign in" tab.'; setMode('in'); return; }
+    }
+  } catch (e) { $('authErr').textContent = e.message; }
+  $('authGo').disabled = false;
+};
+
+// ---------- profile ----------
+EMOJIS.forEach(e => {
+  const s = document.createElement('span');
+  s.textContent = e; if (e === pickedEmoji) s.classList.add('sel');
+  s.onclick = () => { pickedEmoji = e; document.querySelectorAll('#emojiPick span').forEach(x => x.classList.remove('sel')); s.classList.add('sel'); };
+  $('emojiPick').appendChild(s);
+});
+$('saveProfile').onclick = async () => {
+  $('profileErr').textContent = '';
+  const name = $('displayName').value.trim();
+  if (!name) { $('profileErr').textContent = 'Enter your name.'; return; }
+  const { error } = await sb.from('profiles').insert({ user_id: session.user.id, display_name: name, bio: $('bio').value.trim(), avatar_emoji: pickedEmoji });
+  if (error) { $('profileErr').textContent = error.message; return; }
+  render();
+};
+
+// ---------- feed (client-side joins: separate simple queries, merged in JS) ----------
+$('tabFeed').onclick = () => { $('tabFeed').classList.add('active'); $('tabPeople').classList.remove('active'); $('feed').hidden = false; $('people').hidden = true; document.querySelector('.refresh').style.display=''; $('composer').hidden = !myProfile; };
+$('tabPeople').onclick = () => { $('tabPeople').classList.add('active'); $('tabFeed').classList.remove('active'); $('feed').hidden = true; $('people').hidden = false; document.querySelector('.refresh').style.display='none'; $('composer').hidden = true; loadPeople(); };
+$('refreshBtn').onclick = loadFeed;
+
+async function profileMapFor(ids) {
+  const map = {};
+  const uniq = [...new Set(ids)].filter(Boolean);
+  if (!uniq.length) return map;
+  const { data, error } = await sb.from('profiles').select('id, display_name, avatar_emoji').in('id', uniq);
+  if (error) throw error;
+  (data || []).forEach(p => { map[p.id] = p; });
+  return map;
+}
+
+async function loadFeed() {
+  try {
+    const { data: posts, error } = await sb.from('posts')
+      .select('id, body, profile_id, created_at')
+      .order('created_at', { ascending: false }).limit(50);
+    if (error) throw error;
+    const ids = posts.map(p => p.id);
+    const pmap = await profileMapFor(posts.map(p => p.profile_id));
+    let likes = [], comments = [];
+    if (ids.length) {
+      const lr = await sb.from('post_likes').select('post_id, profile_id').in('post_id', ids);
+      if (lr.error) throw lr.error; likes = lr.data || [];
+      const cr = await sb.from('comments').select('post_id').in('post_id', ids);
+      if (cr.error) throw cr.error; comments = cr.data || [];
+    }
+    const likeCount = {}, likedByMe = {}, commentCount = {};
+    likes.forEach(l => { likeCount[l.post_id] = (likeCount[l.post_id]||0)+1; if (myProfile && l.profile_id === myProfile.id) likedByMe[l.post_id] = true; });
+    comments.forEach(c => { commentCount[c.post_id] = (commentCount[c.post_id]||0)+1; });
+    $('feed').innerHTML = posts.length ? '' : '<div class="card muted">No posts yet — be the first to share something!</div>';
+    posts.forEach(p => $('feed').appendChild(renderPost(p, pmap[p.profile_id], likeCount[p.id]||0, !!likedByMe[p.id], commentCount[p.id]||0)));
+  } catch (e) {
+    $('feed').innerHTML = '<div class="card">Could not load feed: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderPost(p, author, nLikes, liked, nComments) {
+  const a = author || { display_name: 'Someone', avatar_emoji: '🙂' };
+  const d = document.createElement('div');
+  d.className = 'card'; d.id = 'post-' + p.id;
+  d.innerHTML =
+    '<div class="post-head"><div class="avatar">' + esc(a.avatar_emoji) + '</div>' +
+    '<div><div class="name">' + esc(a.display_name) + '</div><div class="time">' + timeAgo(p.created_at) + '</div></div></div>' +
+    '<div class="post-body">' + esc(p.body) + '</div>' +
+    '<div class="post-actions">' +
+      '<button data-like class="' + (liked ? 'liked' : '') + '"' + (myProfile ? '' : ' disabled') + '>👍 Like' + (nLikes ? ' (' + nLikes + ')' : '') + '</button>' +
+      '<button data-comments>💬 Comments' + (nComments ? ' (' + nComments + ')' : '') + '</button>' +
+    '</div><div class="comments" hidden></div>';
+  d.querySelector('[data-like]').onclick = () => toggleLike(p.id, liked);
+  d.querySelector('[data-comments]').onclick = () => toggleComments(p.id);
+  if (openComments.has(p.id)) openComments.delete(p.id), toggleComments(p.id);
+  return d;
+}
+
+async function toggleLike(postId, wasLiked) {
+  if (!myProfile) return;
+  if (wasLiked) await sb.from('post_likes').delete().eq('post_id', postId).eq('profile_id', myProfile.id);
+  else await sb.from('post_likes').insert({ post_id: postId, profile_id: myProfile.id });
+  loadFeed();
+}
+
+async function loadCommentsInto(postId) {
+  const box = document.querySelector('#post-' + postId + ' .comments');
+  box.innerHTML = '<div class="muted">Loading…</div>';
+  const { data, error } = await sb.from('comments')
+    .select('id, body, profile_id, created_at')
+    .eq('post_id', postId).order('created_at', { ascending: true });
+  if (error) { box.innerHTML = '<div class="err">' + esc(error.message) + '</div>'; return; }
+  const pmap = await profileMapFor((data || []).map(c => c.profile_id));
+  box.innerHTML = '';
+  (data || []).forEach(c => {
+    const a = pmap[c.profile_id] || { display_name: 'Someone', avatar_emoji: '🙂' };
+    const r = document.createElement('div');
+    r.className = 'comment';
+    r.innerHTML = '<div class="avatar">' + esc(a.avatar_emoji) + '</div><div class="bubble"><div class="name">' + esc(a.display_name) + '</div>' + esc(c.body) + '</div>';
+    box.appendChild(r);
+  });
+  if (myProfile) {
+    const row = document.createElement('div');
+    row.className = 'comment-row';
+    row.innerHTML = '<input type="text" placeholder="Write a comment…" maxlength="300"><button class="btn">Send</button>';
+    const input = row.querySelector('input');
+    const send = async () => {
+      const body = input.value.trim(); if (!body) return;
+      await sb.from('comments').insert({ post_id: postId, profile_id: myProfile.id, body });
+      loadCommentsInto(postId); loadFeed();
+    };
+    row.querySelector('button').onclick = send;
+    input.onkeydown = e => { if (e.key === 'Enter') send(); };
+    box.appendChild(row);
+  } else {
+    const n = document.createElement('div'); n.className = 'muted'; n.textContent = 'Sign in to join the conversation.'; box.appendChild(n);
+  }
+}
+
+function toggleComments(postId) {
+  const box = document.querySelector('#post-' + postId + ' .comments');
+  if (!box.hidden) { box.hidden = true; openComments.delete(postId); return; }
+  openComments.add(postId); box.hidden = false;
+  loadCommentsInto(postId);
+}
+
+$('postBtn').onclick = async () => {
+  const body = $('postBody').value.trim();
+  if (!body || !myProfile) return;
+  $('postBtn').disabled = true;
+  await sb.from('posts').insert({ profile_id: myProfile.id, body });
+  $('postBody').value = ''; $('postBtn').disabled = false;
+  loadFeed();
+};
+
+async function loadPeople() {
+  const { data, error } = await sb.from('profiles').select('display_name, avatar_emoji, bio, created_at').order('created_at', { ascending: true });
+  if (error) { $('people').innerHTML = '<div class="err">' + esc(error.message) + '</div>'; return; }
+  $('people').innerHTML = '<h3 style="margin-bottom:8px">People</h3>' +
+    ((data || []).map(p => '<div class="person"><div class="avatar">' + esc(p.avatar_emoji) + '</div><div><div style="font-weight:600">' + esc(p.display_name) + '</div><div class="muted">' + esc(p.bio || '') + '</div></div></div>').join('') || '<div class="muted">No one here yet.</div>');
+}
+
+setInterval(() => { if (!$('appBox').hidden && !$('feed').hidden) loadFeed(); }, 30000);
+init();
+</script>
+</body>
+</html>
