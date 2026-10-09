@@ -35,6 +35,12 @@
   .post-actions button { flex: 1; background: none; border: none; padding: 8px; border-radius: 6px; font-size: 14px; font-weight: 600; color: #65676b; cursor: pointer; }
   .post-actions button:hover { background: #f0f2f5; }
   .post-actions button.liked { color: #1877f2; }
+  .post-actions button.danger { color: #d32f2f; }
+  .c-actions { margin-left: 8px; white-space: nowrap; }
+  .c-actions button { background: none; border: none; cursor: pointer; font-size: 13px; padding: 2px 4px; color: #65676b; }
+  .edit-row { display: flex; gap: 8px; margin-top: 8px; }
+  .edit-row .btn { margin-top: 0; padding: 8px 16px; border-radius: 20px; }
+  .edit-row .ghost { background: #e4e6eb; color: #1c1e21; }
   .comments { margin-top: 8px; border-top: 1px solid #e4e6eb; padding-top: 8px; }
   .comment { display: flex; gap: 8px; margin-bottom: 8px; }
   .comment .avatar { width: 32px; height: 32px; font-size: 18px; }
@@ -243,6 +249,7 @@ async function loadFeed() {
 
 function renderPost(p, author, nLikes, liked, nComments) {
   const a = author || { display_name: 'Someone', avatar_emoji: '🙂' };
+  const mine = !!(myProfile && p.profile_id === myProfile.id);
   const d = document.createElement('div');
   d.className = 'card'; d.id = 'post-' + p.id;
   d.innerHTML =
@@ -252,10 +259,43 @@ function renderPost(p, author, nLikes, liked, nComments) {
     '<div class="post-actions">' +
       '<button data-like class="' + (liked ? 'liked' : '') + '"' + (myProfile ? '' : ' disabled') + '>👍 Like' + (nLikes ? ' (' + nLikes + ')' : '') + '</button>' +
       '<button data-comments>💬 Comments' + (nComments ? ' (' + nComments + ')' : '') + '</button>' +
+      (mine ? '<button data-edit>✏️ Edit</button><button data-del class="danger">🗑️ Delete</button>' : '') +
     '</div><div class="comments" hidden></div>';
   d.querySelector('[data-like]').onclick = () => toggleLike(p.id, liked);
   d.querySelector('[data-comments]').onclick = () => toggleComments(p.id);
+  if (mine) {
+    d.querySelector('[data-edit]').onclick = () => startPostEdit(p, d.querySelector('.post-body'));
+    d.querySelector('[data-del]').onclick = () => deletePost(p.id);
+  }
   return d;
+}
+
+function startPostEdit(p, bodyEl) {
+  bodyEl.innerHTML = '';
+  const ta = document.createElement('textarea');
+  ta.value = p.body; ta.maxLength = 500; ta.rows = 3;
+  const row = document.createElement('div'); row.className = 'edit-row';
+  const saveBtn = document.createElement('button'); saveBtn.className = 'btn'; saveBtn.textContent = 'Save';
+  const cancelBtn = document.createElement('button'); cancelBtn.className = 'btn ghost'; cancelBtn.textContent = 'Cancel';
+  saveBtn.onclick = async () => {
+    const v = ta.value.trim();
+    if (!v || v === p.body) { loadFeed(); return; }
+    saveBtn.disabled = true;
+    const { error } = await sb.from('posts').update({ body: v }).eq('id', p.id);
+    if (error) { alert('Could not save edit: ' + error.message); saveBtn.disabled = false; return; }
+    loadFeed();
+  };
+  cancelBtn.onclick = () => loadFeed();
+  row.appendChild(saveBtn); row.appendChild(cancelBtn);
+  bodyEl.appendChild(ta); bodyEl.appendChild(row);
+  ta.focus();
+}
+
+async function deletePost(postId) {
+  if (!confirm('Delete this post? Its comments and likes will be removed too.')) return;
+  const { error } = await sb.from('posts').delete().eq('id', postId);
+  if (error) { alert('Could not delete: ' + error.message); return; }
+  loadFeed();
 }
 
 async function toggleLike(postId, wasLiked) {
@@ -276,9 +316,20 @@ async function loadCommentsInto(postId) {
   box.innerHTML = '';
   (data || []).forEach(c => {
     const a = pmap[c.profile_id] || { display_name: 'Someone', avatar_emoji: '🙂' };
+    const mineC = !!(myProfile && c.profile_id === myProfile.id);
     const r = document.createElement('div');
     r.className = 'comment';
-    r.innerHTML = '<div class="avatar">' + esc(a.avatar_emoji) + '</div><div class="bubble"><div class="name">' + esc(a.display_name) + '</div>' + esc(c.body) + '</div>';
+    r.innerHTML = '<div class="avatar">' + esc(a.avatar_emoji) + '</div><div class="bubble"><div class="name">' + esc(a.display_name) + '</div><span class="ctext">' + esc(c.body) + '</span>' +
+      (mineC ? '<span class="c-actions"><button data-cedit title="Edit">✏️</button><button data-cdel title="Delete">🗑️</button></span>' : '') + '</div>';
+    if (mineC) {
+      r.querySelector('[data-cedit]').onclick = () => startCommentEdit(c, r);
+      r.querySelector('[data-cdel]').onclick = async () => {
+        if (!confirm('Delete this comment?')) return;
+        const { error } = await sb.from('comments').delete().eq('id', c.id);
+        if (error) { alert('Could not delete: ' + error.message); return; }
+        loadCommentsInto(c.post_id); loadFeed();
+      };
+    }
     box.appendChild(r);
   });
   if (myProfile) {
@@ -297,6 +348,29 @@ async function loadCommentsInto(postId) {
   } else {
     const n = document.createElement('div'); n.className = 'muted'; n.textContent = 'Sign in to join the conversation.'; box.appendChild(n);
   }
+}
+
+function startCommentEdit(c, rowEl) {
+  const bubble = rowEl.querySelector('.bubble');
+  const nameEl = rowEl.querySelector('.name');
+  bubble.innerHTML = nameEl ? nameEl.outerHTML : '';
+  const input = document.createElement('input');
+  input.type = 'text'; input.value = c.body; input.maxLength = 300;
+  const row = document.createElement('div'); row.className = 'edit-row';
+  const saveBtn = document.createElement('button'); saveBtn.className = 'btn'; saveBtn.textContent = 'Save';
+  const cancelBtn = document.createElement('button'); cancelBtn.className = 'btn ghost'; cancelBtn.textContent = 'Cancel';
+  saveBtn.onclick = async () => {
+    const v = input.value.trim();
+    if (!v || v === c.body) { loadCommentsInto(c.post_id); return; }
+    saveBtn.disabled = true;
+    const { error } = await sb.from('comments').update({ body: v }).eq('id', c.id);
+    if (error) { alert('Could not save edit: ' + error.message); saveBtn.disabled = false; return; }
+    loadCommentsInto(c.post_id); loadFeed();
+  };
+  cancelBtn.onclick = () => loadCommentsInto(c.post_id);
+  row.appendChild(saveBtn); row.appendChild(cancelBtn);
+  bubble.appendChild(input); bubble.appendChild(row);
+  input.focus();
 }
 
 function toggleComments(postId) {
