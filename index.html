@@ -218,6 +218,7 @@ async function profileMapFor(ids) {
 }
 
 async function loadFeed() {
+  const y = window.scrollY; // remember screen position so reloads don't jump
   try {
     const { data: posts, error } = await sb.from('posts')
       .select('id, body, profile_id, created_at')
@@ -244,6 +245,8 @@ async function loadFeed() {
     });
   } catch (e) {
     $('feed').innerHTML = '<div class="card">Could not load feed: ' + esc(e.message) + '</div>';
+  } finally {
+    window.scrollTo(0, y); // restore screen position
   }
 }
 
