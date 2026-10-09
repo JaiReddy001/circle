@@ -231,6 +231,11 @@ async function loadFeed() {
     comments.forEach(c => { commentCount[c.post_id] = (commentCount[c.post_id]||0)+1; });
     $('feed').innerHTML = posts.length ? '' : '<div class="card muted">No posts yet — be the first to share something!</div>';
     posts.forEach(p => $('feed').appendChild(renderPost(p, pmap[p.profile_id], likeCount[p.id]||0, !!likedByMe[p.id], commentCount[p.id]||0)));
+    // Re-open comment threads that were open before the refresh (elements are in the DOM now)
+    [...openComments].forEach(pid => {
+      const b = document.querySelector('#post-' + pid + ' .comments');
+      if (b && b.hidden) { b.hidden = false; loadCommentsInto(pid); }
+    });
   } catch (e) {
     $('feed').innerHTML = '<div class="card">Could not load feed: ' + esc(e.message) + '</div>';
   }
@@ -250,7 +255,6 @@ function renderPost(p, author, nLikes, liked, nComments) {
     '</div><div class="comments" hidden></div>';
   d.querySelector('[data-like]').onclick = () => toggleLike(p.id, liked);
   d.querySelector('[data-comments]').onclick = () => toggleComments(p.id);
-  if (openComments.has(p.id)) openComments.delete(p.id), toggleComments(p.id);
   return d;
 }
 
@@ -297,6 +301,7 @@ async function loadCommentsInto(postId) {
 
 function toggleComments(postId) {
   const box = document.querySelector('#post-' + postId + ' .comments');
+  if (!box) return;
   if (!box.hidden) { box.hidden = true; openComments.delete(postId); return; }
   openComments.add(postId); box.hidden = false;
   loadCommentsInto(postId);
