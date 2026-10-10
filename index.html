@@ -35,6 +35,18 @@
   #photoPreview img { max-width: 100%; max-height: 240px; border-radius: 8px; display: block; }
   #photoRemove { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; border: none; background: rgba(0,0,0,.65); color: #fff; font-size: 14px; cursor: pointer; }
   .post-media { display: block; width: 100%; border-radius: 8px; margin-bottom: 10px; }
+  .chat-person { display: flex; gap: 10px; align-items: center; padding: 10px 4px; border-bottom: 1px solid #dddfe2; cursor: pointer; }
+  .chat-person:last-child { border-bottom: none; }
+  .chat-person .nm { font-weight: 600; }
+  .chat-person .pv { color: #65676b; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; display: inline-block; }
+  #chatMessages { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px; max-height: 46vh; overflow-y: auto; }
+  .msg { max-width: 78%; padding: 8px 12px; border-radius: 16px; font-size: 15px; word-wrap: break-word; }
+  .msg.me { align-self: flex-end; background: #1877f2; color: #fff; border-bottom-right-radius: 4px; }
+  .msg.them { align-self: flex-start; background: #e4e6eb; color: #050505; border-bottom-left-radius: 4px; }
+  .msg .tm { display: block; font-size: 11px; opacity: .7; margin-top: 2px; }
+  .chat-input-row { display: flex; gap: 8px; margin-top: 8px; }
+  .chat-input-row .btn { margin-top: 0; flex-shrink: 0; }
+  #chatUnread { background: #e41e3f; color: #fff; border-radius: 10px; font-size: 11px; padding: 1px 7px; margin-left: 4px; }
   .post-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   .avatar { width: 42px; height: 42px; border-radius: 50%; background: #e4e6eb; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
   .post-head .name { font-weight: 600; }
@@ -106,6 +118,7 @@
     <div class="tabs">
       <button id="tabFeed" class="active">Feed</button>
       <button id="tabPeople">People</button>
+      <button id="tabChat">Chat<span id="chatUnread" hidden></span></button>
     </div>
     <div id="composer" class="card" hidden>
       <textarea id="postBody" placeholder="What's on your mind?"></textarea>
@@ -123,6 +136,20 @@
     <div class="refresh"><button id="refreshBtn">↻ Refresh feed</button></div>
     <div id="feed"></div>
     <div id="people" class="card" hidden></div>
+    <div id="chat" hidden>
+      <div id="chatList" class="card"></div>
+      <div id="chatThread" class="card" hidden>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <button class="btn ghost" id="chatBack" style="margin-top:0">‹ Back</button>
+          <strong id="chatName"></strong>
+        </div>
+        <div id="chatMessages"></div>
+        <div class="chat-input-row">
+          <input id="chatInput" placeholder="Type a message…" autocomplete="off" maxlength="2000">
+          <button class="btn" id="chatSend">Send</button>
+        </div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -162,7 +189,7 @@ async function render() {
   if (!signedIn) {
     $('profileBox').hidden = true; $('appBox').hidden = false;
     $('composer').hidden = true; $('signedOutNotice').hidden = false;
-    myProfile = null; loadFeed(); return;
+    myProfile = null; unsubscribeChat(); loadFeed(); return;
   }
   const { data } = await sb.from('profiles').select('*').eq('user_id', session.user.id).maybeSingle();
   myProfile = data || null;
@@ -170,7 +197,7 @@ async function render() {
   $('appBox').hidden = !myProfile;
   $('composer').hidden = !myProfile;
   $('signedOutNotice').hidden = true;
-  if (myProfile) { $('userLabel').textContent = myProfile.avatar_emoji + ' ' + myProfile.display_name; loadFeed(); }
+  if (myProfile) { $('userLabel').textContent = myProfile.avatar_emoji + ' ' + myProfile.display_name; loadFeed(); subscribeChat(); }
 }
 
 $('authBtn').onclick = async () => {
@@ -221,8 +248,20 @@ $('saveProfile').onclick = async () => {
 };
 
 // ---------- feed (client-side joins: separate simple queries, merged in JS) ----------
-$('tabFeed').onclick = () => { $('tabFeed').classList.add('active'); $('tabPeople').classList.remove('active'); $('feed').hidden = false; $('people').hidden = true; document.querySelector('.refresh').style.display=''; $('composer').hidden = !myProfile; };
-$('tabPeople').onclick = () => { $('tabPeople').classList.add('active'); $('tabFeed').classList.remove('active'); $('feed').hidden = true; $('people').hidden = false; document.querySelector('.refresh').style.display='none'; $('composer').hidden = true; loadPeople(); };
+function showTab(which) {
+  for (const [btn, view] of [['tabFeed', 'feed'], ['tabPeople', 'people'], ['tabChat', 'chat']]) {
+    $(btn).classList.toggle('active', which === view);
+    $(view).hidden = which !== view;
+  }
+  const inFeed = which === 'feed';
+  document.querySelector('.refresh').style.display = inFeed ? '' : 'none';
+  $('composer').hidden = !inFeed || !myProfile;
+  if (which === 'people') loadPeople();
+  if (which === 'chat') openChatList();
+}
+$('tabFeed').onclick = () => showTab('feed');
+$('tabPeople').onclick = () => showTab('people');
+$('tabChat').onclick = () => showTab('chat');
 $('refreshBtn').onclick = loadFeed;
 
 async function profileMapFor(ids) {
@@ -484,6 +523,113 @@ async function loadPeople() {
   if (error) { $('people').innerHTML = '<div class="err">' + esc(error.message) + '</div>'; return; }
   $('people').innerHTML = '<h3 style="margin-bottom:8px">People</h3>' +
     ((data || []).map(p => '<div class="person"><div class="avatar">' + esc(p.avatar_emoji) + '</div><div><div style="font-weight:600">' + esc(p.display_name) + '</div><div class="muted">' + esc(p.bio || '') + '</div></div></div>').join('') || '<div class="muted">No one here yet.</div>');
+}
+
+// ---------- chat (Messenger-style direct messages) ----------
+let chatPartner = null, chatChannel = null, chatUnread = 0;
+
+function updateChatBadge() {
+  const b = $('chatUnread');
+  b.hidden = chatUnread === 0;
+  b.textContent = chatUnread > 9 ? '9+' : String(chatUnread);
+}
+
+async function openChatList() {
+  chatPartner = null;
+  $('chatThread').hidden = true;
+  $('chatList').hidden = false;
+  await loadChatList();
+}
+
+async function loadChatList() {
+  const box = $('chatList');
+  if (!myProfile) { box.innerHTML = '<div class="muted">Sign in to chat.</div>'; return; }
+  const { data: profs } = await sb.from('profiles').select('id, display_name, avatar_emoji').neq('id', myProfile.id).order('display_name');
+  const { data: msgs } = await sb.from('messages').select('sender_id, receiver_id, body, created_at')
+    .or('sender_id.eq.' + myProfile.id + ',receiver_id.eq.' + myProfile.id)
+    .order('created_at', { ascending: false }).limit(300);
+  const lastBy = {};
+  for (const m of (msgs || [])) {
+    const other = m.sender_id === myProfile.id ? m.receiver_id : m.sender_id;
+    if (!lastBy[other]) lastBy[other] = m;
+  }
+  const t = id => (lastBy[id] && lastBy[id].created_at) || '';
+  const sorted = (profs || []).slice().sort((a, b) => t(b.id) < t(a.id) ? -1 : (t(b.id) > t(a.id) ? 1 : 0));
+  box.innerHTML = '<div class="muted" style="margin-bottom:8px">Pick someone to chat with:</div>' +
+    (sorted.map(p => {
+      const lm = lastBy[p.id];
+      const preview = lm ? esc(lm.body).slice(0, 60) : 'Say hello 👋';
+      return '<div class="chat-person" data-id="' + p.id + '">' +
+        '<span style="font-size:28px">' + esc(p.avatar_emoji || '🙂') + '</span>' +
+        '<span><span class="nm">' + esc(p.display_name) + '</span><br><span class="pv">' + preview + '</span></span>' +
+        '</div>';
+    }).join('') || '<div class="muted">No one here yet.</div>');
+  box.querySelectorAll('.chat-person').forEach(el => {
+    el.onclick = () => openChat((profs || []).find(p => p.id === el.dataset.id));
+  });
+}
+
+async function openChat(partner) {
+  chatPartner = partner;
+  chatUnread = 0; updateChatBadge();
+  $('chatList').hidden = true;
+  $('chatThread').hidden = false;
+  $('chatName').textContent = (partner.avatar_emoji || '🙂') + ' ' + partner.display_name;
+  $('chatMessages').innerHTML = '<div class="muted">Loading…</div>';
+  const { data, error } = await sb.from('messages').select('*')
+    .or('and(sender_id.eq.' + myProfile.id + ',receiver_id.eq.' + partner.id + '),and(sender_id.eq.' + partner.id + ',receiver_id.eq.' + myProfile.id + ')')
+    .order('created_at', { ascending: true }).limit(300);
+  if (error) { $('chatMessages').innerHTML = '<div class="err">Could not load messages.</div>'; return; }
+  $('chatMessages').innerHTML = '';
+  (data || []).forEach(appendChatMessage);
+}
+
+function appendChatMessage(m) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + (m.sender_id === myProfile.id ? 'me' : 'them');
+  d.innerHTML = esc(m.body) + '<span class="tm">' + timeAgo(m.created_at) + '</span>';
+  $('chatMessages').appendChild(d);
+  const c = $('chatMessages');
+  c.scrollTop = c.scrollHeight;
+}
+
+async function sendChat() {
+  const body = $('chatInput').value.trim();
+  if (!body || !chatPartner || !myProfile) return;
+  $('chatInput').value = '';
+  const { data, error } = await sb.from('messages')
+    .insert({ sender_id: myProfile.id, receiver_id: chatPartner.id, body })
+    .select().single();
+  if (error) { alert('Could not send: ' + error.message); $('chatInput').value = body; return; }
+  appendChatMessage(data);
+}
+
+$('chatBack').onclick = () => openChatList();
+$('chatSend').onclick = sendChat;
+$('chatInput').onkeydown = e => { if (e.key === 'Enter') sendChat(); };
+
+function subscribeChat() {
+  if (chatChannel) { sb.removeChannel(chatChannel); chatChannel = null; }
+  if (!myProfile) return;
+  chatChannel = sb.channel('chat-' + myProfile.id)
+    .on('postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: 'receiver_id=eq.' + myProfile.id },
+      payload => {
+        const m = payload.new;
+        if (chatPartner && m.sender_id === chatPartner.id && !$('chatThread').hidden) {
+          appendChatMessage(m);
+        } else {
+          chatUnread++;
+          updateChatBadge();
+        }
+      })
+    .subscribe();
+}
+
+function unsubscribeChat() {
+  if (chatChannel) { sb.removeChannel(chatChannel); chatChannel = null; }
+  chatPartner = null; chatUnread = 0;
+  const b = $('chatUnread'); if (b) { b.hidden = true; }
 }
 
 setInterval(() => { if (!$('appBox').hidden && !$('feed').hidden) loadFeed(); }, 30000);
