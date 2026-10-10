@@ -84,6 +84,8 @@
   .err { color: #d32f2f; font-size: 14px; margin-top: 8px; }
   .refresh { text-align: center; margin-bottom: 12px; }
   .refresh button { background: #fff; border: 1px solid #ccd0d5; border-radius: 20px; padding: 7px 18px; font-weight: 600; cursor: pointer; color: #65676b; }
+  #notifBanner { display: flex; gap: 10px; align-items: center; justify-content: space-between; background: #e7f3ff; border: 1px solid #bcd8f7; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; }
+  #notifBanner .btn { margin-top: 0; padding: 8px 14px; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -116,6 +118,10 @@
 
   <div id="appBox" hidden>
     <div class="notice" id="signedOutNotice" hidden>You're browsing as a guest. <b>Sign in</b> to post, like and comment.</div>
+    <div id="notifBanner" hidden>
+      <span>🔔 Get alerts for new messages, likes &amp; comments.</span>
+      <button class="btn" id="notifBtn">Enable</button>
+    </div>
     <div class="tabs">
       <button id="tabFeed" class="active">Feed</button>
       <button id="tabPeople">People</button>
@@ -159,6 +165,7 @@
 const SUPABASE_URL = 'https://tpswnwmqzsxlbqzwklxa.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwc3dud21xenN4bGJxendrbHhhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NjY3MzcsImV4cCI6MjEwNzE0MjczN30.t4AiYY59ynyY0lcCCdg_I27V4FIpCYxUmvUzWWmKi_I';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const VAPID_PUBLIC_KEY = 'BIAZMn8WvnbmNRCyvjxydOEg_0DEtPCauA6Wqbna5QRmSKYkXvW3VqHayYN1rOR52Hk5r6P2NZfNWs4O8prlDlI';
 
 const EMOJIS = ['🙂','😎','🤩','😇','🥳','🤠','👩','👨','👧','👦','👵','👴','🐶','🐱','🦊','🐼','🦁','🐸'];
 let session = null, myProfile = null, mode = 'in', pickedEmoji = EMOJIS[0], openComments = new Set();
@@ -190,7 +197,7 @@ async function render() {
   if (!signedIn) {
     $('profileBox').hidden = true; $('appBox').hidden = false;
     $('composer').hidden = true; $('signedOutNotice').hidden = false;
-    myProfile = null; unsubscribeChat(); loadFeed(); return;
+    myProfile = null; unsubscribeChat(); $('notifBanner').hidden = true; loadFeed(); return;
   }
   const { data } = await sb.from('profiles').select('*').eq('user_id', session.user.id).maybeSingle();
   myProfile = data || null;
@@ -198,7 +205,7 @@ async function render() {
   $('appBox').hidden = !myProfile;
   $('composer').hidden = !myProfile;
   $('signedOutNotice').hidden = true;
-  if (myProfile) { $('userLabel').textContent = myProfile.avatar_emoji + ' ' + myProfile.display_name; loadFeed(); subscribeChat(); }
+  if (myProfile) { $('userLabel').textContent = myProfile.avatar_emoji + ' ' + myProfile.display_name; loadFeed(); subscribeChat(); } refreshNotifBanner();
 }
 
 $('authBtn').onclick = async () => {
@@ -631,6 +638,60 @@ function unsubscribeChat() {
   if (chatChannel) { sb.removeChannel(chatChannel); chatChannel = null; }
   chatPartner = null; chatUnread = 0;
   const b = $('chatUnread'); if (b) { b.hidden = true; }
+}
+
+
+// ---------- push notifications ----------
+function notifSupported() {
+  return ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
+}
+
+function refreshNotifBanner() {
+  const show = !!myProfile && notifSupported() && Notification.permission !== 'denied'
+    && !localStorage.getItem('notifEnabled') && !localStorage.getItem('notifDismissed');
+  $('notifBanner').hidden = !show;
+}
+
+function urlBase64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const raw = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + pad);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function enableNotifications() {
+  if (!notifSupported()) { alert('Push notifications are not supported in this browser.'); return; }
+  try {
+    const reg = await navigator.serviceWorker.register('sw.js');
+    let perm = Notification.permission;
+    if (perm === 'default') perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      alert('Notifications are blocked. Allow them in your browser settings to get alerts.');
+      return;
+    }
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) });
+    const { endpoint, keys } = sub.toJSON();
+    const { error } = await sb.from('push_subscriptions').upsert(
+      { profile_id: myProfile.id, endpoint: endpoint, p256dh: keys.p256dh, auth: keys.auth },
+      { onConflict: 'endpoint' }
+    );
+    if (error) throw error;
+    localStorage.setItem('notifEnabled', '1');
+    refreshNotifBanner();
+    alert('Notifications enabled! You will get alerts for new messages, likes and comments.');
+  } catch (e) {
+    alert('Could not enable notifications: ' + (e.message || e));
+  }
+}
+
+$('notifBtn').onclick = enableNotifications;
+
+// deep link from a tapped notification: ?chat=<profileId>
+async function handleChatDeepLink() {
+  const id = new URLSearchParams(location.search).get('chat');
+  if (!id || !myProfile) return;
+  const { data } = await sb.from('profiles').select('id, display_name, avatar_emoji').eq('id', id).maybeSingle();
+  if (data) { showTab('chat'); openChat(data); }
+  history.replaceState(null, '', location.pathname);
 }
 
 setInterval(() => { if (!$('appBox').hidden && !$('feed').hidden) loadFeed(); }, 30000);
