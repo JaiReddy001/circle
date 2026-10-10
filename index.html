@@ -45,6 +45,8 @@
   .msg.me { align-self: flex-end; background: #1877f2; color: #fff; border-bottom-right-radius: 4px; }
   .msg.them { align-self: flex-start; background: #e4e6eb; color: #050505; border-bottom-left-radius: 4px; }
   .msg .tm { display: block; font-size: 11px; opacity: .7; margin-top: 2px; }
+  .msg-del { background: none; border: none; cursor: pointer; font-size: 12px; opacity: .55; padding: 0 0 0 6px; }
+  .msg.me .msg-del { filter: grayscale(1) brightness(2.2); }
   .chat-input-row { display: flex; gap: 8px; margin-top: 8px; }
   .chat-input-row .btn { margin-top: 0; flex-shrink: 0; }
   #chatUnread { background: #e41e3f; color: #fff; border-radius: 10px; font-size: 11px; padding: 1px 7px; margin-left: 4px; }
@@ -149,6 +151,7 @@
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
           <button class="btn ghost" id="chatBack" style="margin-top:0">‹ Back</button>
           <strong id="chatName"></strong>
+          <button class="btn ghost" id="chatClear" style="margin-top:0;margin-left:auto">🗑️ Clear</button>
         </div>
         <div id="chatMessages"></div>
         <div class="chat-input-row">
@@ -595,7 +598,22 @@ async function openChat(partner) {
 function appendChatMessage(m) {
   const d = document.createElement('div');
   d.className = 'msg ' + (m.sender_id === myProfile.id ? 'me' : 'them');
+  d.dataset.mid = m.id;
   d.innerHTML = esc(m.body) + '<span class="tm">' + timeAgo(m.created_at) + '</span>';
+  if (m.sender_id === myProfile.id) {
+    const del = document.createElement('button');
+    del.className = 'msg-del';
+    del.title = 'Delete message';
+    del.textContent = '🗑️';
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete this message?')) return;
+      const { error } = await sb.from('messages').delete().eq('id', m.id);
+      if (error) { alert('Could not delete: ' + error.message); return; }
+      d.remove();
+    };
+    d.appendChild(del);
+  }
   $('chatMessages').appendChild(d);
   const c = $('chatMessages');
   c.scrollTop = c.scrollHeight;
@@ -613,6 +631,14 @@ async function sendChat() {
 }
 
 $('chatBack').onclick = () => openChatList();
+$('chatClear').onclick = async () => {
+  if (!chatPartner || !myProfile) return;
+  if (!confirm('Clear this conversation? All messages between you and ' + chatPartner.display_name + ' will be permanently deleted.')) return;
+  const { error } = await sb.from('messages').delete()
+    .or('and(sender_id.eq.' + myProfile.id + ',receiver_id.eq.' + chatPartner.id + '),and(sender_id.eq.' + chatPartner.id + ',receiver_id.eq.' + myProfile.id + ')');
+  if (error) { alert('Could not clear chat: ' + error.message); return; }
+  $('chatMessages').innerHTML = '';
+};
 $('chatSend').onclick = sendChat;
 $('chatInput').onkeydown = e => { if (e.key === 'Enter') sendChat(); };
 
@@ -630,6 +656,14 @@ function subscribeChat() {
           chatUnread++;
           updateChatBadge();
         }
+      })
+    .on('postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'messages' },
+      payload => {
+        const id = payload.old && payload.old.id;
+        if (!id || $('chatThread').hidden) return;
+        const el = document.querySelector('#chatMessages [data-mid="' + id + '"]');
+        if (el) el.remove();
       })
     .subscribe();
 }
